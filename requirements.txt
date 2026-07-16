@@ -1,0 +1,4 @@
+yahooquery>=2.2.37
+groq>=0.9.0
+pydantic>=2.5.0
+requests>=2.31.0

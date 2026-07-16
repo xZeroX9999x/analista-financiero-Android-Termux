@@ -1,0 +1,6 @@
+# Windows (CMD)
+set GROQ_API_KEY=tu_api_key_aqui
+# Windows (PowerShell)
+$env:GROQ_API_KEY="tu_api_key_aqui"
+# Linux / macOS
+export GROQ_API_KEY="tu_api_key_aqui"
