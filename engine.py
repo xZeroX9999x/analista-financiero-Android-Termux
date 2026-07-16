@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 from typing import Optional, List
 
+from edgar import set_identity, Company
 from yahooquery import Ticker
 from groq import Groq
 
@@ -13,8 +14,10 @@ from cache import CacheManager
 cache = CacheManager()
 
 class MotorExtraccion:
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, identidad_edgar: str, api_key: Optional[str] = None):
+        self.identidad = identidad_edgar
         self.groq_client = None
+        set_identity(identidad_edgar)
         
         if api_key:
             try:
@@ -35,47 +38,41 @@ class MotorExtraccion:
         logger.error(f"❌ Intentos agotados. Error: {last_exception}")
         return None
     
-    def obtener_fundamentales(self, ticker: str) -> Optional[DatosFinancieros]:
-        cached = cache.get('fund', ticker)
+    def obtener_sec(self, ticker: str) -> Optional[DatosFinancieros]:
+        cached = cache.get('sec', ticker)
         if cached: return DatosFinancieros(**cached)
         
-        logger.info(f"📊 Extrayendo Fundamentales de la matriz financiera para {ticker}...")
+        logger.info(f"📊 Extrayendo SEC EDGAR para {ticker}...")
         def _fetch():
-            yq = Ticker(ticker)
-            try:
-                inc = yq.income_statement()
-                bal = yq.balance_sheet()
-                cf = yq.cash_flow()
-                
-                if isinstance(inc, str) or isinstance(bal, str):
-                    return None
-
-                inc_dict = inc.to_dict('records')[-1] if not inc.empty else {}
-                bal_dict = bal.to_dict('records')[-1] if not bal.empty else {}
-                cf_dict = cf.to_dict('records')[-1] if not isinstance(cf, str) and not cf.empty else {}
-
-                datos = DatosFinancieros(
-                    revenue=inc_dict.get('TotalRevenue', 0),
-                    net_income=inc_dict.get('NetIncome', 0),
-                    total_assets=bal_dict.get('TotalAssets', 0),
-                    total_liabilities=bal_dict.get('TotalLiabilitiesNetMinorityInterest', bal_dict.get('TotalLiabilities', 0)),
-                    free_cash_flow=cf_dict.get('FreeCashFlow', 0),
-                    operating_cash_flow=cf_dict.get('OperatingCashFlow', 0),
-                    capital_expenditure=cf_dict.get('CapitalExpenditure', 0)
-                )
-                cache.set('fund', ticker, datos)
-                return datos
-            except Exception as e:
-                logger.warning(f"⚠️ Error procesando fundamentales: {e}")
-                return None
-                
+            corp = Company(ticker)
+            f = corp.get_financials()
+            if not f: return None
+            
+            fcf = f.get_free_cash_flow()
+            ocf = capex = None
+            if fcf == 0:
+                try:
+                    cf_stmt = f.cash_flow_statement
+                    if cf_stmt:
+                        ocf = cf_stmt.get('NetCashFromOperatingActivities', 0)
+                        capex = cf_stmt.get('CapitalExpenditure', 0)
+                        if ocf and capex: fcf = ocf - abs(capex)
+                except: pass
+            
+            datos = DatosFinancieros(
+                revenue=f.get_revenue(), net_income=f.get_net_income(),
+                total_assets=f.get_total_assets(), total_liabilities=f.get_total_liabilities(),
+                free_cash_flow=fcf, operating_cash_flow=ocf, capital_expenditure=capex
+            )
+            cache.set('sec', ticker, datos)
+            return datos
         return self._reintentar(_fetch)
     
     def obtener_yahoo(self, ticker: str) -> Optional[TelemetriaMercado]:
         cached = cache.get('yahoo', ticker)
         if cached: return TelemetriaMercado(**cached)
         
-        logger.info(f"📈 Obteniendo telemetría de mercado para {ticker}...")
+        logger.info(f"📈 Obteniendo telemetría Yahoo para {ticker}...")
         def _fetch():
             yq = Ticker(ticker)
             stats = yq.key_stats.get(ticker, {})
@@ -124,14 +121,14 @@ class MotorExtraccion:
     
     def analizar(self, ticker: str) -> ReporteFinal:
         logger.info(f"🔍 Evaluando Ticker: {ticker}...")
-        fundamentales_data = self.obtener_fundamentales(ticker)
+        sec_data = self.obtener_sec(ticker)
         mkt_data = self.obtener_yahoo(ticker)
         noticias = self.obtener_noticias(ticker)
         
         return ReporteFinal(
             ticker=ticker.upper(), fecha=datetime.now().strftime("%Y-%m-%d"),
-            fundamentales=fundamentales_data, mercado=mkt_data, noticias=noticias,
-            metadata={'timestamp': datetime.now().isoformat(), 'origen': 'Termux_Optimizado_Nativo'}
+            fundamentales=sec_data, mercado=mkt_data, noticias=noticias,
+            metadata={'timestamp': datetime.now().isoformat(), 'origen': 'Termux_Optimizado'}
         )
     
     def generar_analisis_ia(self, reporte: ReporteFinal) -> str:
@@ -205,7 +202,7 @@ Conclusión: Declara claramente si recomiendas Invertir, Mantener o Vender.
                 lineas.append(f"   - Ratio de Solvencia (A/P): {ratio:.2f}x")
             lineas.append(f"   - Flujo de Caja Libre: ${f.free_cash_flow:,.2f}")
         else:
-            lineas.append("1. FUNDAMENTALES: No disponibles")
+            lineas.append("1. FUNDAMENTALES: No disponibles (Probable ETF/Fondo)")
         
         if reporte.mercado:
             m = reporte.mercado
