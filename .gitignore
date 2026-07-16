@@ -1,0 +1,22 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Caché de la aplicación y salidas
+.analista_financiero_cache/
+output/
+
+# Entornos e IDEs de PC
+.vscode/
+.idea/
+.DS_Store
+
+# Variables de entorno (por si luego usas un .env para la API Key)
+.env
