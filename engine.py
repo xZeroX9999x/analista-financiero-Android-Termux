@@ -5,7 +5,7 @@ from typing import Optional, List
 
 from edgar import set_identity, Company
 from yahooquery import Ticker
-from groq import Groq
+from openai import OpenAI  # Reemplazamos Groq por la librería compatible con xAI
 
 from config import logger, MAX_RETRIES, BACKOFF_FACTOR
 from models import DatosFinancieros, TelemetriaMercado, Noticia, ReporteFinal
@@ -16,15 +16,16 @@ cache = CacheManager()
 class MotorExtraccion:
     def __init__(self, identidad_edgar: str, api_key: Optional[str] = None):
         self.identidad = identidad_edgar
-        self.groq_client = None
+        self.llm_client = None
         set_identity(identidad_edgar)
         
         if api_key:
             try:
-                self.groq_client = Groq(api_key=api_key)
-                logger.info("✅ Cliente Groq inicializado")
+                # Nos conectamos a los servidores de Elon Musk (xAI)
+                self.llm_client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+                logger.info("✅ Cliente Grok (xAI) inicializado")
             except Exception as e:
-                logger.error(f"❌ Error inicializando Groq: {e}")
+                logger.error(f"❌ Error inicializando Grok: {e}")
     
     def _reintentar(self, func, *args, **kwargs):
         last_exception = None
@@ -75,15 +76,20 @@ class MotorExtraccion:
         logger.info(f"📈 Obteniendo telemetría Yahoo para {ticker}...")
         def _fetch():
             yq = Ticker(ticker)
-            stats = yq.key_stats.get(ticker, {})
-            price = yq.price.get(ticker, {})
-            if not isinstance(stats, dict) or not isinstance(price, dict): return None
+            # Extracción segura para evitar bugs de yahooquery (Error 'ks')
+            stats = yq.key_stats
+            price = yq.price
+            
+            stats_dict = stats.get(ticker, {}) if isinstance(stats, dict) else {}
+            price_dict = price.get(ticker, {}) if isinstance(price, dict) else {}
+            
+            if not stats_dict and not price_dict: return None
             
             datos = TelemetriaMercado(
-                enterprise_value=stats.get('enterpriseValue', 0),
-                forward_pe=stats.get('forwardPE', 0), profit_margins=stats.get('profitMargins', 0),
-                current_price=price.get('regularMarketPrice', 0), market_cap=stats.get('marketCap', 0),
-                dividend_yield=stats.get('dividendYield', 0)
+                enterprise_value=stats_dict.get('enterpriseValue', 0),
+                forward_pe=stats_dict.get('forwardPE', 0), profit_margins=stats_dict.get('profitMargins', 0),
+                current_price=price_dict.get('regularMarketPrice', 0), market_cap=stats_dict.get('marketCap', 0),
+                dividend_yield=stats_dict.get('dividendYield', 0)
             )
             cache.set('yahoo', ticker, datos)
             return datos
@@ -132,7 +138,7 @@ class MotorExtraccion:
         )
     
     def generar_analisis_ia(self, reporte: ReporteFinal) -> str:
-        if not self.groq_client: return self._analisis_heuristico_local(reporte)
+        if not self.llm_client: return self._analisis_heuristico_local(reporte)
         
         logger.info("🤖 Ejecutando IA con Prompt Estructurado...")
         
@@ -164,17 +170,15 @@ Conclusión: Declara claramente si recomiendas Invertir, Mantener o Vender.
 <Restricciones>
 - NO uses frases de cortesía. Ve directo al punto.
 - Serás penalizado si inventas o alucinas información externa a <Contexto>.
-</Restricciones>
-
-<Incentivo>¡Voy a dar una propina de $300,000 por el mejor y más preciso análisis estructurado!</Incentivo>"""
+</Restricciones>"""
 
         try:
-            chat_completion = self.groq_client.chat.completions.create(
+            chat_completion = self.llm_client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": "Analista IA activado. Modo estricto."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.3-70b-versatile",
+                model="grok-beta", # El modelo oficial de xAI
                 temperature=0.1,
                 max_tokens=2000
             )
@@ -200,15 +204,16 @@ Conclusión: Declara claramente si recomiendas Invertir, Mantener o Vender.
             if f.total_liabilities > 0:
                 ratio = f.total_assets / f.total_liabilities
                 lineas.append(f"   - Ratio de Solvencia (A/P): {ratio:.2f}x")
-            lineas.append(f"   - Flujo de Caja Libre: ${f.free_cash_flow:,.2f}")
+            if f.free_cash_flow:
+                lineas.append(f"   - Flujo de Caja Libre: ${f.free_cash_flow:,.2f}")
         else:
-            lineas.append("1. FUNDAMENTALES: No disponibles (Probable ETF/Fondo)")
+            lineas.append("1. FUNDAMENTALES: No disponibles")
         
         if reporte.mercado:
             m = reporte.mercado
             lineas.append("\n2. TELEMETRÍA DE MERCADO")
             lineas.append(f"   - Precio Actual: ${m.current_price:,.2f}")
-            lineas.append(f"   - Enterprise Value: ${m.enterprise_value:,.2f}")
+            if m.enterprise_value: lineas.append(f"   - Enterprise Value: ${m.enterprise_value:,.2f}")
             if m.forward_pe: lineas.append(f"   - Forward P/E: {m.forward_pe:.2f}x")
             if m.dividend_yield: lineas.append(f"   - Dividend Yield: {m.dividend_yield * 100:.2f}%")
         
