@@ -1,5 +1,7 @@
+
 # config.py
 import logging
+import os
 from pathlib import Path
 
 # Constantes del sistema
@@ -10,6 +12,9 @@ CACHE_TTL_HOURS = 24
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 2
 TIMEOUT_SECONDS = 30
+
+# Configuración de API Key
+GROK_API_KEY = os.getenv("TUAPIDEGROKAQUI")
 
 # Configuración de logging
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
